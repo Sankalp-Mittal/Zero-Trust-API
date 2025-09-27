@@ -134,7 +134,7 @@ def serve(role, rows, listen_host, listen_port,
                 if dim != rows: raise RuntimeError("WRITE dim != rows")
                 vec = [read_i64(conn) for _ in range(dim)]
                 for i in range(rows): A_share[i] += vec[i]
-                print(f"[{role}] WRITE {vec} -> A_share now {A_share}")
+                print(f"[{role}] WRITE {vec} -> {role}_share now {A_share}")
                 conn.sendall(b"OK")
 
             elif op == OP_READ_SECURE:

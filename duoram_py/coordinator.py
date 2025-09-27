@@ -3,6 +3,7 @@ import argparse, socket, struct, random, threading
 
 OP_WRITE_VEC   = 0x40
 OP_READ_SECURE = 0x41
+STR_SIZE = 10
 
 def pack_u8(x):  return struct.pack("!B", x)
 def pack_u32(x): return struct.pack("!I", x & 0xFFFFFFFF)
@@ -52,29 +53,94 @@ def main():
     ap.add_argument("--op", required=True, choices=["write","read"])
     ap.add_argument("--dim", type=int, required=True)
     ap.add_argument("--idx", type=int, required=True)
-    ap.add_argument("--val", type=int, default=0)
+    ap.add_argument("--val", type=str, default=0)
     ap.add_argument("--c0", required=True)
     ap.add_argument("--c1", required=True)
     args = ap.parse_args()
 
+    # len of ram = 10 * dim
+
     if args.idx >= args.dim: raise SystemExit("idx < dim required")
 
     if args.op == "write":
-        e0, e1 = make_standard_basis_share(args.dim, args.idx, args.val)
+        print(f"WRITE idx={args.idx} value={args.val}")
+
+        stored_vals = [[0, 0] for _ in range(STR_SIZE)]
+        threads = []
+        sbv = []
+        lock_c0 = threading.Lock()
+        lock_c1 = threading.Lock()
+
+        for i in range(STR_SIZE):
+            ei0, ei1 = make_standard_basis_share(args.dim*STR_SIZE, STR_SIZE*args.idx + i, 1)
+            sbv.append( (ei0, ei1) )
+            def ri0(i=i):
+                with lock_c0:
+                    stored_vals[i][0] = read_share(args.c0, sbv[i][0])
+
+            def ri1(i=i):
+                with lock_c1:
+                    stored_vals[i][1] = read_share(args.c1, sbv[i][1])
+
+            ti0 = threading.Thread(target=ri0, daemon=True)
+            ti1 = threading.Thread(target=ri1, daemon=True)
+            ti0.start(); ti1.start()
+            threads += [ti0, ti1]
+
+        for t in threads: 
+            t.join()
+        
+        print(f"READ idx={args.idx} -> shares {stored_vals}")
+
+        vals_ascii = [0]*STR_SIZE
+        for i in range(len(args.val)):
+            if i >= STR_SIZE:
+                print(f"WARNING: truncating input string to {STR_SIZE} chars")
+                break
+            vals_ascii[i] = ord(args.val[i])
+
+        print(f"vals_ascii = {vals_ascii}")
+        e0, e1 = [0]*args.dim * STR_SIZE, [0]*args.dim * STR_SIZE
+        for i in range(STR_SIZE):
+            ei0, ei1 = make_standard_basis_share(args.dim * STR_SIZE, STR_SIZE*args.idx + i, vals_ascii[i] - stored_vals[i][0] - stored_vals[i][1])
+            e0 = [x+y for x,y in zip(e0, ei0)]
+            e1 = [x+y for x,y in zip(e1, ei1)]
+            
         t0 = threading.Thread(target=write_vec, args=(args.c0, e0))
         t1 = threading.Thread(target=write_vec, args=(args.c1, e1))
         t0.start(); t1.start(); t0.join(); t1.join()
         print(f"WRITE idx={args.idx} value={args.val}")
+
     else:
-        e0, e1 = make_standard_basis_share(args.dim, args.idx, 1)
-        out = [None, None]
-        def r0(): out[0] = read_share(args.c0, e0)
-        def r1(): out[1] = read_share(args.c1, e1)
-        t0 = threading.Thread(target=r0)
-        t1 = threading.Thread(target=r1)
-        t0.start(); t1.start(); t0.join(); t1.join()
-        x = out[0] + out[1]
-        print(f"READ idx={args.idx} -> {x}")
+        stored_vals = [[0, 0] for _ in range(STR_SIZE)]
+        threads = []
+        sbv = []
+        lock_c0 = threading.Lock()
+        lock_c1 = threading.Lock()
+
+        for i in range(STR_SIZE):
+            ei0, ei1 = make_standard_basis_share(args.dim*STR_SIZE, STR_SIZE*args.idx + i, 1)
+            sbv.append( (ei0, ei1) )
+            def ri0(i=i):
+                with lock_c0:
+                    stored_vals[i][0] = read_share(args.c0, sbv[i][0])
+
+            def ri1(i=i):
+                with lock_c1:
+                    stored_vals[i][1] = read_share(args.c1, sbv[i][1])
+
+            ti0 = threading.Thread(target=ri0, daemon=True)
+            ti1 = threading.Thread(target=ri1, daemon=True)
+            ti0.start(); ti1.start()
+            threads += [ti0, ti1]
+
+        for t in threads: 
+            t.join()
+        
+        # print(f"READ idx={args.idx} -> shares {stored_vals}")
+        x = [a[0]+a[1] for a in stored_vals]
+        s = "".join(map(chr, x))  
+        print(f"READ idx={args.idx} -> {s}")
 
 if __name__ == "__main__":
     main()
